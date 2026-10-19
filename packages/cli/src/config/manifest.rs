@@ -627,6 +627,13 @@ pub struct AndroidConfig {
     #[serde(default)]
     pub proguard_rules: Vec<PathBuf>,
 
+    /// Path to custom Android res directory.
+    /// Files in this directory will override default generated resources
+    /// (e.g. ic_launcher_foreground.xml, ic_launcher_background.xml, ic_launcher.xml).
+    /// Relative to the package manifest directory (Dioxus.toml location).
+    #[serde(default)]
+    pub res_dir: Option<PathBuf>,
+
     /// Additional Android permissions not in unified config.
     #[serde(default)]
     pub permissions: HashMap<String, RawPermission>,

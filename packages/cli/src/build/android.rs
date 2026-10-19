@@ -290,17 +290,35 @@ impl BuildRequest {
             main_activity,
         )?;
 
-        // Write the res folder, containing stuff like default icons, colors, and menubars.
         let res = app_main.join("res");
         create_dir_all(&res)?;
-        create_dir_all(res.join("values"))?;
-        write(
-            res.join("values").join("strings.xml"),
-            hbs.render_template(
+
+        if let Some(res_dir) = &self.config.android.res_dir {
+            let custom_res = self.package_manifest_dir().join(res_dir);
+            if custom_res.exists() {
+                self.copy_custom_res(&custom_res, &res)?;
+                tracing::info!("Using custom Android res_dir: {}", custom_res.display());
+            } else {
+                bail!(
+                    "Custom Android res_dir not found: {}",
+                    custom_res.display()
+                );
+            }
+        } else {
+            let strings_xml = hbs.render_template(
                 include_str!("../../assets/android/gen/app/src/main/res/values/strings.xml.hbs"),
                 &hbs_data,
-            )?,
-        )?;
+            )?;
+            self.write_default_res(&res, &strings_xml)?;
+        }
+
+        Ok(())
+    }
+
+    fn write_default_res(&self, res: &Path, strings_xml: &str) -> Result<()> {
+        use std::fs::{create_dir_all, write};
+        create_dir_all(res.join("values"))?;
+        write(res.join("values").join("strings.xml"), strings_xml)?;
         write(
             res.join("values").join("colors.xml"),
             include_bytes!("../../assets/android/gen/app/src/main/res/values/colors.xml"),
@@ -375,6 +393,22 @@ impl BuildRequest {
             ),
         )?;
 
+        Ok(())
+    }
+
+    fn copy_custom_res(&self, src: &Path, dst: &Path) -> Result<()> {
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+            if src_path.is_dir() {
+                std::fs::create_dir_all(&dst_path)?;
+                self.copy_custom_res(&src_path, &dst_path)?;
+            } else {
+                std::fs::copy(&src_path, &dst_path)?;
+                tracing::debug!("Custom res: {}", src_path.display());
+            }
+        }
         Ok(())
     }
 
@@ -1094,6 +1128,7 @@ impl AndroidTools {
         //
         // this is a better fallback than falling onto the users' system java home since many users might
         // not even know which java that is - they just know they have android studio installed
+        #[allow(clippy::unnecessary_lazy_evaluations)]
         let java_home = std::env::var_os("JAVA_HOME")
             .map(PathBuf::from)
             .or_else(|| {
@@ -1164,6 +1199,11 @@ impl AndroidTools {
 
         if cfg!(target_os = "windows") {
             return prebuilt.join("windows-x86_64").join("bin");
+        }
+
+        if cfg!(target_os = "android") {
+            // Termux/Android uses the linux toolchain (via 'android' symlink)
+            return prebuilt.join("android").join("bin");
         }
 
         // Otherwise return the first entry in the prebuilt directory
